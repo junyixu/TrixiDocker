@@ -128,7 +128,7 @@ RUN julia -e 'using Pkg; Pkg.instantiate(); try Pkg.precompile() catch end' \
     && echo "build-time libcuda from: $LD_LIBRARY_PATH" && test "$LD_LIBRARY_PATH" != . \
     && julia -e 'using Pkg; Pkg.precompile(; strict = true)' \
     && julia -e 'using Trixi, Reactant, CUDA, KernelAbstractions, Enzyme, Trixi2Vtk, CairoMakie' \
-    && julia -e 'using Reactant; p = string(Reactant.Reactant_jll.host_platform); println(p); occursin("gpu=cuda", p) || error("Reactant_jll is not the CUDA build")' \
+    && julia -e 'using Reactant; p = Reactant.Reactant_jll.host_platform; println(p); p["gpu"] == "cuda" || error("Reactant_jll is not the CUDA build")' \
     && find $JULIA_DEPOT_PATH/artifacts -name 'libcudart.so.*' | grep -q .
 
 # TrixiCUDA.jl pins Trixi.jl to 0.11 - 0.13.5, so it cannot share the main environment.
