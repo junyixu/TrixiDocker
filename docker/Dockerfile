@@ -7,11 +7,14 @@
 # reachable only via the SSH proxy.
 #
 # Build (context = repository root):
-#   docker build -f docker/Dockerfile -t ghcr.io/junyixu/trixidocker .
+#   docker build -f docker/Dockerfile -t ghcr.io/junyixu/trixidocker .                       # NVIDIA
+#   docker build -f docker/Dockerfile --build-arg ACCEL=tpu -t ghcr.io/junyixu/trixidocker:tpu .
 #
 # Inside the pod (JULIA_PROJECT already points at the main environment):
 #   julia -t auto script.jl                         # Trixi + Reactant + CUDA
-#   julia --project=$TRIXICUDA_PROJECT script.jl    # TrixiCUDA.jl
+#   julia --project=$TRIXICUDA_PROJECT script.jl    # TrixiCUDA.jl (cuda variant only)
+# On a Cloud TPU VM (:tpu variant):
+#   sudo docker run --rm -it --privileged --net=host ghcr.io/junyixu/trixidocker:tpu julia
 
 # ---- juliaup (AUR build stage) ----------------------------------------------
 # makepkg refuses to run as root: build juliaup-bin as a throwaway user here and
@@ -92,6 +95,9 @@ FROM archlinux:base
 LABEL org.opencontainers.image.source=https://github.com/junyixu/TrixiDocker
 
 ARG JULIA_VERSION=1.12.7
+# cuda: NVIDIA pods (Runpod). tpu: Cloud TPU VMs — Reactant_jll's CPU build, which drives
+# TPUs through libtpu; no CUDA toolkit checks and no TrixiCUDA environment.
+ARG ACCEL=cuda
 
 # Precompiled package images are CPU-specific. Build for the same multi-target
 # set as the official Julia binaries, so the images stay valid on whatever host
@@ -120,21 +126,36 @@ RUN pacman -Syu --noconfirm \
 # need it without any libcuda, so CUDA_Driver_jll caches the same decisions as on a pod; then
 # precompile Reactant and its dependents with CUDA_Driver_jll's forward-compat libcuda on
 # LD_LIBRARY_PATH for this step only. On a pod the host driver is injected instead.
-# The checks fail the build if Reactant_jll fell back to its CPU-only binary or the CUDA
-# toolkit artifacts are missing, either of which would mean a GPU pod recompiles at boot.
+# The tpu variant switches Reactant_jll to its CPU build, which needs no libcuda.
+# The checks fail the build if Reactant_jll is not the requested build or (cuda) the CUDA
+# toolkit artifacts are missing, either of which would mean recompiling at boot.
 COPY docker/main/Project.toml docker/main/Manifest.toml docker/main/LocalPreferences.toml $JULIA_PROJECT/
-RUN julia -e 'using Pkg; Pkg.instantiate(); try Pkg.precompile() catch end' \
-    && export LD_LIBRARY_PATH="$(dirname "$(find $JULIA_DEPOT_PATH/artifacts -path '*/lib/libcuda.so.1' -print -quit)")" \
-    && echo "build-time libcuda from: $LD_LIBRARY_PATH" && test "$LD_LIBRARY_PATH" != . \
+RUN if [ "$ACCEL" = tpu ]; then \
+      sed -i 's/^gpu = "cuda"/gpu = "none"/; s/^gpu_version = "12.9"/gpu_version = "none"/' \
+        $JULIA_PROJECT/LocalPreferences.toml; \
+    fi \
+    && julia -e 'using Pkg; Pkg.instantiate(); try Pkg.precompile() catch end' \
+    && if [ "$ACCEL" = cuda ]; then \
+      export LD_LIBRARY_PATH="$(dirname "$(find $JULIA_DEPOT_PATH/artifacts -path '*/lib/libcuda.so.1' -print -quit)")" \
+      && echo "build-time libcuda from: $LD_LIBRARY_PATH" && test "$LD_LIBRARY_PATH" != .; \
+    fi \
     && julia -e 'using Pkg; Pkg.precompile(; strict = true)' \
     && julia -e 'using Trixi, Reactant, CUDA, KernelAbstractions, Enzyme, Trixi2Vtk, CairoMakie' \
-    && julia -e 'using Reactant; p = Reactant.Reactant_jll.host_platform; println(p); p["gpu"] == "cuda" || error("Reactant_jll is not the CUDA build")' \
-    && find $JULIA_DEPOT_PATH/artifacts -name 'libcudart.so.*' | grep -q .
+    && julia -e 'using Reactant; p = Reactant.Reactant_jll.host_platform; println(p); want = ENV["ACCEL"] == "tpu" ? "none" : "cuda"; p["gpu"] == want || error("Reactant_jll is not the gpu=$want build")' \
+    && if [ "$ACCEL" = cuda ]; then find $JULIA_DEPOT_PATH/artifacts -name 'libcudart.so.*' | grep -q .; fi
 
 # TrixiCUDA.jl pins Trixi.jl to 0.11 - 0.13.5, so it cannot share the main environment.
 # Precompile only: its __init__ queries the GPU, which the build machine does not have.
 COPY docker/trixicuda/Project.toml docker/trixicuda/Manifest.toml docker/trixicuda/LocalPreferences.toml $TRIXICUDA_PROJECT/
-RUN julia --project=$TRIXICUDA_PROJECT -e 'using Pkg; Pkg.instantiate(); Pkg.precompile(; strict = true)' \
+RUN if [ "$ACCEL" = cuda ]; then \
+      julia --project=$TRIXICUDA_PROJECT -e 'using Pkg; Pkg.instantiate(); Pkg.precompile(; strict = true)'; \
+    fi
+
+# tpu: put libtpu where Reactant looks for it on a TPU host (its "libtpu" scratch space),
+# so the first run does not download it.
+RUN if [ "$ACCEL" = tpu ]; then \
+      julia -e 'using Reactant; d = joinpath(DEPOT_PATH[1], "scratchspaces", string(Base.PkgId(Reactant).uuid), "libtpu"); mkpath(d); Reactant.Accelerators.TPU.download_libtpu_if_needed(d); println(readdir(d))'; \
+    fi \
     && chmod -R a+rX $JULIA_DEPOT_PATH
 
 # Everything below sits after the Julia depot layers, so changing the dev tools
