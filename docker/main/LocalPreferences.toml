@@ -1,0 +1,20 @@
+# Trixi.jl: KernelAbstractions kernels on every backend (the CPU reference runs the same
+# kernels as the GPU / Reactant path), and no LoopVectorization, which neither Enzyme nor
+# Reactant can trace. Changing either value recompiles Trixi, so it is fixed at build time.
+[Trixi]
+backend = "kernelabstractions"
+loop_vectorization = false
+
+# Reactant_jll picks its binary (CPU-only vs CUDA) by probing libcuda when it is installed.
+# The image is built without a GPU, so request the CUDA 12.9 build explicitly; it runs on any
+# driver >= 575 (CUDA 12.9), including 13.x drivers.
+[Reactant_jll]
+gpu = "cuda"
+gpu_version = "12.9"
+
+# Pin the CUDA.jl toolkit artifacts for the same reason (and to match Reactant's 12.9).
+[CUDA_Runtime_jll]
+version = "12.9"
+
+[CUDA_Compiler_jll]
+version = "12.9"

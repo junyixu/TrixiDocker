@@ -1,0 +1,13 @@
+# TrixiCUDA.jl calls set_log_type!/set_sqrt_type!/set_loop_vectorization! when it loads;
+# writing the same values here up front keeps Trixi from recompiling on first use.
+[Trixi]
+log = "log_Base"
+sqrt = "sqrt_Base"
+loop_vectorization = false
+
+# The image is built without a GPU: pin the CUDA toolkit artifacts.
+[CUDA_Runtime_jll]
+version = "12.9"
+
+[CUDA_Compiler_jll]
+version = "12.9"

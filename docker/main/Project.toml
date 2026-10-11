@@ -1,0 +1,31 @@
+[compat]
+BenchmarkTools = "1.8"
+CUDA = "6.2"
+CairoMakie = "0.15.15"
+Enzyme = "0.13.215"
+KernelAbstractions = "0.9.45"
+OrdinaryDiffEqLowStorageRK = "3.4"
+OrdinaryDiffEqSSPRK = "2.3"
+Reactant = "0.2.291"
+StaticArrays = "1.9"
+Trixi = "0.17.14"
+Trixi2Vtk = "0.3.33"
+julia = "1.12"
+
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+OrdinaryDiffEqLowStorageRK = "b0944070-b475-4768-8dec-fb6eb410534d"
+OrdinaryDiffEqSSPRK = "669c94d9-1f4b-4b64-b377-1aa079aa2388"
+Reactant = "3c362404-f566-11ee-1572-e11a4b42c853"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Trixi = "a7f1ee26-1774-49b1-8366-f1abc58fbfcb"
+Trixi2Vtk = "bc1476a1-1ca6-4cc3-950b-c312b255ff95"
+
+[extras]
+CUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
+Reactant_jll = "0192cb87-2b54-54ad-80e0-3be72ad8a3c0"

@@ -1,0 +1,22 @@
+[compat]
+BenchmarkTools = "1.8"
+CUDA = "5.11"
+OrdinaryDiffEqLowStorageRK = "1.11"
+OrdinaryDiffEqSSPRK = "1.12"
+StaticArrays = "1.9"
+Trixi = "0.13.5"
+TrixiCUDA = "1.0"
+julia = "1.12"
+
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+OrdinaryDiffEqLowStorageRK = "b0944070-b475-4768-8dec-fb6eb410534d"
+OrdinaryDiffEqSSPRK = "669c94d9-1f4b-4b64-b377-1aa079aa2388"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Trixi = "a7f1ee26-1774-49b1-8366-f1abc58fbfcb"
+TrixiCUDA = "5056661c-942a-472c-b3bc-01507f717a60"
+
+[extras]
+CUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
