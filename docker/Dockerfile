@@ -1,16 +1,32 @@
 # syntax=docker/dockerfile:1
-# GPU runtime image for Runpod pods: Julia + Trixi.jl, Reactant.jl, CUDA.jl (and the rest of
-# docker/main/Project.toml) installed and precompiled at build time, so a pod goes from boot
-# to the first time step without Pkg work. TrixiCUDA.jl, which pins an older Trixi.jl, gets its
-# own environment (docker/trixicuda). On top of that, a root-only dev environment (neovim +
-# plugins, zsh, yazi, …) for editing and inspecting runs on pods reachable only via the SSH proxy.
+# GPU runtime image for Runpod pods (Arch Linux): Julia + Trixi.jl, Reactant.jl, CUDA.jl (and
+# the rest of docker/main/Project.toml) installed and precompiled at build time, so a pod goes
+# from boot to the first time step without Pkg work. TrixiCUDA.jl, which pins an older
+# Trixi.jl, gets its own environment (docker/trixicuda). On top of that, a root-only dev
+# environment (neovim + plugins, zsh, yazi, …) for editing and inspecting runs on pods
+# reachable only via the SSH proxy.
 #
 # Build (context = repository root):
 #   docker build -f docker/Dockerfile -t ghcr.io/junyixu/trixidocker .
 #
 # Inside the pod (JULIA_PROJECT already points at the main environment):
-#   julia -t auto script.jl                                   # Trixi + Reactant + CUDA
-#   julia --project=$TRIXICUDA_PROJECT script.jl              # TrixiCUDA.jl
+#   julia -t auto script.jl                         # Trixi + Reactant + CUDA
+#   julia --project=$TRIXICUDA_PROJECT script.jl    # TrixiCUDA.jl
+
+# ---- juliaup (AUR build stage) ----------------------------------------------
+# makepkg refuses to run as root: build juliaup-bin as a throwaway user here and
+# hand only the package file to the runtime stage, so the final image carries
+# neither base-devel nor a sudo-capable build user. The glob skips the -debug
+# split package that makepkg may emit.
+FROM archlinux:base AS aur
+RUN pacman -Syu --noconfirm --needed base-devel git \
+ && useradd -m builder \
+ && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+USER builder
+RUN git clone --depth=1 https://aur.archlinux.org/juliaup-bin.git ~/juliaup-bin \
+ && cd ~/juliaup-bin \
+ && makepkg -sir --noconfirm \
+ && mkdir ~/pkg && cp juliaup-bin-[0-9]*.pkg.tar.zst ~/pkg/
 
 # ---- dev tools (build stage) -------------------------------------------------
 # Same distro as the runtime stage, so the compiled treesitter parsers and
@@ -70,10 +86,8 @@ RUN ~/.local/share/zinit/plugins/romkatv---powerlevel10k/gitstatus/install
 RUN find ~/.local/share/nvim/lazy ~/.local/share/zinit -path '*/lazy/blink.cmp/.git' -prune -o -name .git -prune -exec rm -rf {} + \
  && find ~/.local/share/nvim/lazy ~/.local/share/zinit/plugins -mindepth 2 -maxdepth 2 -type d \( -name test -o -name tests \) -prune -exec rm -rf {} +
 
-
 # ---- runtime image -------------------------------------------------------------
-# Runpod's base image: its default CMD starts sshd from the PUBLIC_KEY env var.
-FROM runpod/base:1.0.2-ubuntu2404
+FROM archlinux:base
 
 LABEL org.opencontainers.image.source=https://github.com/junyixu/TrixiDocker
 
@@ -85,16 +99,20 @@ ARG JULIA_VERSION=1.12.7
 ENV JULIA_DEPOT_PATH=/opt/julia-depot \
     JULIA_PROJECT=/opt/trixi-env \
     TRIXICUDA_PROJECT=/opt/trixicuda-env \
-    JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)" \
-    PATH=/opt/julia/bin:$PATH
+    JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)"
 
-RUN apt-get update && apt-get install -y --no-install-recommends unzip \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://rclone.org/install.sh | bash \
-    && curl -fsSL "https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_VERSION%.*}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz" \
-    | tar -xz -C /opt \
-    && mv "/opt/julia-${JULIA_VERSION}" /opt/julia \
-    && julia --version
+# juliaup keeps its own state in ~/.julia/juliaup (it ignores JULIA_DEPOT_PATH).
+# Exactly one Julia in the image: no version picked from manifests, no
+# versions-db refresh in the background of every `julia` start.
+COPY --from=aur /home/builder/pkg/ /tmp/pkg/
+RUN pacman -Syu --noconfirm \
+ && pacman -U --noconfirm /tmp/pkg/*.pkg.tar.zst \
+ && rm -rf /tmp/pkg /var/cache/pacman/pkg/* \
+ && juliaup add "${JULIA_VERSION}" \
+ && juliaup default "${JULIA_VERSION}" \
+ && juliaup config manifestversiondetect false \
+ && juliaup config versionsdbupdateinterval 0 \
+ && julia --version
 
 # Main environment first, so a code-only change reuses this (slow) layer.
 # The checks fail the build if Reactant_jll fell back to its CPU-only binary or the CUDA
@@ -118,17 +136,15 @@ RUN julia --project=$TRIXICUDA_PROJECT -e 'using Pkg; Pkg.instantiate(); Pkg.pre
 # by host cores; the oversubscribed threads spin and starve the GPU.
 ENV OPENBLAS_NUM_THREADS=1
 
-# Dev tools: runtime packages here, the built nvim / CLI tools / configs from the
-# devtools stage. Root only — sshd and authorized_keys stay with runpod/base.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      git zsh tmux fzf zoxide direnv bat ripgrep fd-find file less ncurses-term kitty-terminfo \
-      universal-ctags global htop \
- && ln -sf /usr/bin/batcat /usr/local/bin/bat && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+# Dev tools and pod services: packages here, nvim plugins / zsh plugins /
+# configs from the devtools stage. Root only. python3 is for the cuInit smoke
+# test run right after a pod boots.
+RUN pacman -Syu --noconfirm --needed \
+      openssh git zsh tmux fzf zoxide direnv bat ripgrep fd file less kitty-terminfo \
+      ctags global htop eza atuin yazi neovim rclone python \
+ && rm -rf /var/cache/pacman/pkg/* \
  && usermod -s /usr/bin/zsh root \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=devtools /opt/nvim /opt/nvim
-COPY --from=devtools /opt/bin/ /usr/local/bin/
-RUN ln -s /opt/nvim/bin/nvim /usr/local/bin/nvim
+ && echo 'LANG=C.UTF-8' > /etc/locale.conf
 COPY --from=devtools /root/.config /root/.config
 COPY --from=devtools /root/.local /root/.local
 COPY --from=devtools /root/.zshrc /root/.zshrc
@@ -136,13 +152,12 @@ COPY --from=devtools /root/.cache /root/.cache
 
 # Image ENV reaches only PID 1, not SSH sessions: replay it for login shells
 # (/etc/profile.d) and for every zsh, including `ssh pod 'cmd'` (/etc/zsh/zshenv;
-# zsh on Ubuntu does not read /etc/profile).
+# zsh reads /etc/profile only as a login shell).
 RUN { echo "export JULIA_DEPOT_PATH='$JULIA_DEPOT_PATH'"; \
       echo "export JULIA_PROJECT='$JULIA_PROJECT'"; \
       echo "export TRIXICUDA_PROJECT='$TRIXICUDA_PROJECT'"; \
       echo "export JULIA_CPU_TARGET='$JULIA_CPU_TARGET'"; \
       echo "export OPENBLAS_NUM_THREADS='$OPENBLAS_NUM_THREADS'"; \
-      echo 'case ":$PATH:" in *:/opt/julia/bin:*) ;; *) export PATH="/opt/julia/bin:$PATH" ;; esac'; \
     } > /etc/profile.d/julia.sh \
  && echo '[ -r /etc/profile.d/julia.sh ] && emulate sh -c ". /etc/profile.d/julia.sh"' >> /etc/zsh/zshenv
 
@@ -151,8 +166,9 @@ RUN { echo "export JULIA_DEPOT_PATH='$JULIA_DEPOT_PATH'"; \
 # with E1568). Fix those up and switch to zsh. A direct SSH session goes through
 # sshd with the client's TERM and lands in zsh, so it never hits this.
 # /start.sh appends `source /etc/rp_environment` to .bashrc at boot, after this
-# block, so load it here before exec'ing zsh.
-RUN cat >> /root/.bashrc <<'EOF'
+# block, so load it here before exec'ing zsh. Arch's /root has no dotfiles, so
+# also add the .bash_profile that makes a login bash read .bashrc.
+RUN echo '[[ -f ~/.bashrc ]] && . ~/.bashrc' > /root/.bash_profile && cat >> /root/.bashrc <<'EOF'
 
 # Runpod SSH proxy session → 256-color TERM, UTF-8, nvim without tty queries, zsh
 if [[ $- == *i* && $TERM == xterm ]]; then
@@ -161,6 +177,11 @@ if [[ $- == *i* && $TERM == xterm ]]; then
     exec zsh -l
 fi
 EOF
+
+# Pod entrypoint in place of runpod/base's: sshd from PUBLIC_KEY, pod env for
+# SSH sessions, then idle.
+COPY --chmod=755 docker/start.sh /start.sh
+CMD ["/start.sh"]
 
 COPY . /root/TrixiDocker
 WORKDIR /root/TrixiDocker
