@@ -115,10 +115,18 @@ RUN pacman -Syu --noconfirm \
  && julia --version
 
 # Main environment first, so a code-only change reuses this (slow) layer.
+# Reactant_jll's CUDA build links libcuda.so.1 directly, so Reactant cannot even be loaded
+# (hence precompiled) on this GPU-less builder. First precompile everything that does not
+# need it without any libcuda, so CUDA_Driver_jll caches the same decisions as on a pod; then
+# precompile Reactant and its dependents with CUDA_Driver_jll's forward-compat libcuda on
+# LD_LIBRARY_PATH for this step only. On a pod the host driver is injected instead.
 # The checks fail the build if Reactant_jll fell back to its CPU-only binary or the CUDA
 # toolkit artifacts are missing, either of which would mean a GPU pod recompiles at boot.
 COPY docker/main/Project.toml docker/main/Manifest.toml docker/main/LocalPreferences.toml $JULIA_PROJECT/
-RUN julia -e 'using Pkg; Pkg.instantiate(); Pkg.precompile(; strict = true)' \
+RUN julia -e 'using Pkg; Pkg.instantiate(); try Pkg.precompile() catch end' \
+    && export LD_LIBRARY_PATH="$(dirname "$(find $JULIA_DEPOT_PATH/artifacts -path '*/lib/libcuda.so.1' -print -quit)")" \
+    && echo "build-time libcuda from: $LD_LIBRARY_PATH" && test "$LD_LIBRARY_PATH" != . \
+    && julia -e 'using Pkg; Pkg.precompile(; strict = true)' \
     && julia -e 'using Trixi, Reactant, CUDA, KernelAbstractions, Enzyme, Trixi2Vtk, CairoMakie' \
     && julia -e 'using Reactant; p = string(Reactant.Reactant_jll.host_platform); println(p); occursin("gpu=cuda", p) || error("Reactant_jll is not the CUDA build")' \
     && find $JULIA_DEPOT_PATH/artifacts -name 'libcudart.so.*' | grep -q .
