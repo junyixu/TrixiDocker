@@ -144,6 +144,22 @@ RUN if [ "$ACCEL" = tpu ]; then \
     && julia -e 'using Reactant; p = Reactant.Reactant_jll.host_platform; println(p); want = ENV["ACCEL"] == "tpu" ? "none" : "cuda"; p["gpu"] == want || error("Reactant_jll is not the gpu=$want build")' \
     && if [ "$ACCEL" = cuda ]; then find $JULIA_DEPOT_PATH/artifacts -name 'libcudart.so.*' | grep -q .; fi
 
+# Optional: replace the registered Trixi.jl by a git revision, to test an upstream PR on a
+# feat/docker-* branch. A development version (here 0.18.0-DEV) is outside the [compat] pin,
+# and Trixi2Vtk requires Trixi 0.17, so both are dropped from the environment first.
+# This branch: Trixi PR #3332 (enum `NodeIndex` instead of the `Symbol`s in `node_indices`).
+ARG TRIXI_URL=https://github.com/trixi-framework/Trixi.jl
+ARG TRIXI_REV=5b0fe9c502ba9f88d3a50a6e441a676b128d963d
+RUN if [ -n "$TRIXI_REV" ]; then \
+      sed -i '/^\[compat\]/,/^\[/{/^Trixi = /d}' $JULIA_PROJECT/Project.toml \
+      && julia -e 'using Pkg; Pkg.rm("Trixi2Vtk"); Pkg.add(url = ENV["TRIXI_URL"], rev = ENV["TRIXI_REV"]); try Pkg.precompile() catch end' \
+      && if [ "$ACCEL" = cuda ]; then \
+        export LD_LIBRARY_PATH="$(dirname "$(find $JULIA_DEPOT_PATH/artifacts -path '*/lib/libcuda.so.1' -print -quit)")"; \
+      fi \
+      && julia -e 'using Pkg; Pkg.precompile(; strict = true)' \
+      && julia -e 'using Trixi, Reactant, CUDA, KernelAbstractions, Enzyme, CairoMakie; println("Trixi ", pkgversion(Trixi), ", NodeIndex defined: ", isdefined(Trixi, :NodeIndex))'; \
+    fi
+
 # TrixiCUDA.jl pins Trixi.jl to 0.11 - 0.13.5, so it cannot share the main environment.
 # Precompile only: its __init__ queries the GPU, which the build machine does not have.
 COPY docker/trixicuda/Project.toml docker/trixicuda/Manifest.toml docker/trixicuda/LocalPreferences.toml $TRIXICUDA_PROJECT/
