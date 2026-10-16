@@ -161,28 +161,30 @@ RUN if [ "$ACCEL" = tpu ]; then \
     && chmod -R a+rX $JULIA_DEPOT_PATH
 
 # Python + JAX for Reactant's PythonCall extension: traced code can call JAX functions, e.g.
-# Pallas TPU kernels, and Reactant embeds the StableHLO that JAX lowers. The interpreter is
-# Arch's own python (3.14; PythonCall supports >= 3.10 except 3.14.0/3.14.1, jaxlib ships
-# cp314 wheels). Arch has no jax package, and pip may not write to the system site-packages
-# (PEP 668), so jax goes into a venv on top of it. PythonCall uses that venv through
-# CondaPkg's Null backend: no Conda, no downloads at run time, and Reactant's CondaPkg.toml
-# (python <= 3.12, tensorflow, which the extension only needs for SavedModel export) is not
-# applied. jax 0.11.0 pairs with libtpu 0.0.44, older than the libtpu Reactant 0.2.291 runs
-# (0.0.45.dev20260728): a Mosaic (Pallas) kernel serialized by a newer jax may not load in
-# an older libtpu. The tpu variant gets jax[tpu], whose own libtpu is for pure-JAX runs;
-# JAX_PLATFORMS=cpu by default, so in a Reactant process only Reactant opens the TPU
-# (JAX_PLATFORMS=tpu for a pure-JAX run). PRESERVE_ALL: adding PythonCall must not move any
-# package of the main environment.
+# Pallas TPU kernels, and Reactant embeds the StableHLO that JAX lowers. uv installs both the
+# interpreter (its standalone CPython 3.14, in $UV_PYTHON_INSTALL_DIR; PythonCall supports
+# >= 3.10 except 3.14.0/3.14.1, jaxlib ships cp314 wheels) and jax, into the venv $JAX_VENV.
+# PythonCall uses that interpreter as its docs describe for "Python and required Python
+# packages already installed": CondaPkg's Null backend plus JULIA_PYTHONCALL_EXE. No Conda:
+# CondaPkg would merge Reactant's CondaPkg.toml, which pins python <= 3.12 and adds
+# tensorflow (the extension needs it only for SavedModel export). jax 0.11.0 pairs with
+# libtpu 0.0.44, older than the libtpu Reactant 0.2.291 runs (0.0.45.dev20260728): a Mosaic
+# (Pallas) kernel serialized by a newer jax may not load in an older libtpu. The tpu variant
+# gets jax[tpu], whose own libtpu is for pure-JAX runs; JAX_PLATFORMS=cpu by default, so in a
+# Reactant process only Reactant opens the TPU (JAX_PLATFORMS=tpu for a pure-JAX run).
+# PRESERVE_ALL: adding PythonCall must not move any package of the main environment.
+ARG PYTHON_VERSION=3.14
 ARG JAX_VERSION=0.11.0
 ARG PYTHONCALL_VERSION=0.9.37
-ENV JAX_VENV=/opt/jax-env \
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+    JAX_VENV=/opt/jax-env \
     JAX_PLATFORMS=cpu \
     JULIA_CONDAPKG_BACKEND=Null \
     JULIA_PYTHONCALL_EXE=/opt/jax-env/bin/python
 COPY docker/jax_smoke.jl /opt/jax_smoke.jl
-RUN pacman -Syu --noconfirm --needed python uv \
+RUN pacman -Syu --noconfirm --needed uv \
  && rm -rf /var/cache/pacman/pkg/* \
- && uv venv --no-cache --python-preference only-system --python /usr/bin/python3 $JAX_VENV \
+ && uv venv --no-cache --python-preference only-managed --python $PYTHON_VERSION $JAX_VENV \
  && if [ "$ACCEL" = tpu ]; then jax="jax[tpu]==$JAX_VERSION"; else jax="jax==$JAX_VERSION"; fi \
  && uv pip install --no-cache --python $JAX_VENV/bin/python "$jax" numpy \
  && $JAX_VENV/bin/python -c 'import sys, jax, jaxlib; print(sys.version, "jax", jax.__version__, "jaxlib", jaxlib.__version__)' \
@@ -192,7 +194,7 @@ RUN pacman -Syu --noconfirm --needed python uv \
     fi \
  && julia -e 'using Pkg; Pkg.precompile(; strict = true)' \
  && julia /opt/jax_smoke.jl \
- && chmod -R a+rX $JAX_VENV \
+ && chmod -R a+rX $JAX_VENV $UV_PYTHON_INSTALL_DIR \
  && find $JULIA_DEPOT_PATH $JULIA_PROJECT ! -perm -a+r -exec chmod a+rX {} +
 
 # Everything below sits after the Julia depot layers, so changing the dev tools
