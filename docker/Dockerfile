@@ -158,6 +158,13 @@ RUN if [ "$ACCEL" = tpu ]; then \
     fi \
     && chmod -R a+rX $JULIA_DEPOT_PATH
 
+# JETLS language server, installed as a Pkg app into $JULIA_DEPOT_PATH/bin (its own
+# layer: a slow compile that must not rebuild the depot layers above it).
+ENV PATH=$JULIA_DEPOT_PATH/bin:$PATH
+RUN julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")' \
+    && test -x "$JULIA_DEPOT_PATH/bin/jetls" \
+    && chmod -R a+rX $JULIA_DEPOT_PATH
+
 # Everything below sits after the Julia depot layers, so changing the dev tools
 # or the shell environment never rebuilds the depot.
 
@@ -170,7 +177,7 @@ ENV OPENBLAS_NUM_THREADS=1
 # test run right after a pod boots.
 RUN pacman -Syu --noconfirm --needed \
       openssh git zsh tmux fzf zoxide direnv bat ripgrep fd file less kitty-terminfo \
-      ctags global htop eza atuin yazi neovim rclone python \
+      ctags global htop eza atuin yazi neovim rclone python pyright \
  && rm -rf /var/cache/pacman/pkg/* \
  && usermod -s /usr/bin/zsh root \
  && echo 'LANG=C.UTF-8' > /etc/locale.conf
@@ -187,6 +194,7 @@ RUN { echo "export JULIA_DEPOT_PATH='$JULIA_DEPOT_PATH'"; \
       echo "export TRIXICUDA_PROJECT='$TRIXICUDA_PROJECT'"; \
       echo "export JULIA_CPU_TARGET='$JULIA_CPU_TARGET'"; \
       echo "export OPENBLAS_NUM_THREADS='$OPENBLAS_NUM_THREADS'"; \
+      echo 'case ":$PATH:" in *:'"$JULIA_DEPOT_PATH"'/bin:*) ;; *) export PATH="'"$JULIA_DEPOT_PATH"'/bin:$PATH" ;; esac'; \
     } > /etc/profile.d/julia.sh \
  && echo '[ -r /etc/profile.d/julia.sh ] && emulate sh -c ". /etc/profile.d/julia.sh"' >> /etc/zsh/zshenv
 
