@@ -158,11 +158,14 @@ RUN if [ "$ACCEL" = tpu ]; then \
     fi \
     && chmod -R a+rX $JULIA_DEPOT_PATH
 
-# JETLS language server, installed as a Pkg app into $JULIA_DEPOT_PATH/bin (its own
-# layer: a slow compile that must not rebuild the depot layers above it).
+# JETLS language server and the Runic formatter, installed as Pkg apps into
+# $JULIA_DEPOT_PATH/bin (their own layer: a slow compile that must not rebuild the depot
+# layers above it).
 ENV PATH=$JULIA_DEPOT_PATH/bin:$PATH
 RUN julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")' \
+    && julia -e 'using Pkg; Pkg.Apps.add("Runic")' \
     && test -x "$JULIA_DEPOT_PATH/bin/jetls" \
+    && test -x "$JULIA_DEPOT_PATH/bin/runic" \
     && chmod -R a+rX $JULIA_DEPOT_PATH
 
 # Everything below sits after the Julia depot layers, so changing the dev tools
