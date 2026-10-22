@@ -134,7 +134,7 @@ RUN if [ "$ACCEL" = tpu ]; then \
       sed -i 's/^gpu = "cuda"/gpu = "none"/; s/^gpu_version = "12.9"/gpu_version = "none"/' \
         $JULIA_PROJECT/LocalPreferences.toml; \
     fi \
-    && julia -e 'using Pkg; Pkg.instantiate(); try Pkg.precompile() catch end' \
+    && julia -e 'using Pkg; Pkg.update("Reactant"); Pkg.instantiate(); try Pkg.precompile() catch end' \
     && if [ "$ACCEL" = cuda ]; then \
       export LD_LIBRARY_PATH="$(dirname "$(find $JULIA_DEPOT_PATH/artifacts -path '*/lib/libcuda.so.1' -print -quit)")" \
       && echo "build-time libcuda from: $LD_LIBRARY_PATH" && test "$LD_LIBRARY_PATH" != .; \
